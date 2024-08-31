@@ -143,7 +143,7 @@ class Serializable(dataobject):
             if key in obj.__fields__:
                 setattr(obj, key, value) # REMOVES EXCESSIVE DATA GIVEN BY THE API. EITHER DOCUMENT IT, OR DON'T GIVE IT TO THE USER, DISCORD!!!! #rant
             else:
-                logger.warning("Field %s ignored when serializing %s", key, obj)
+                logger.warning("Field %s ignored when serializing %s", key, cls)
         
         for field_name, typeclass in cls.__annotations__.items():
             annot_type = typeclass
