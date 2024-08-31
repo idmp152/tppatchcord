@@ -1,8 +1,15 @@
+import sys
+
 from enum import Enum
-from typing import Any
+from typing import Any, get_args, get_origin
+from types import UnionType
+import logging
 
 from recordclass import dataobject
 
+
+logging.basicConfig(format='[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class ApplicationCommandPermissionType(int, Enum):
     ROLE = 1
@@ -123,14 +130,59 @@ class AuditLogEvent(int, Enum):
     HOME_SETTINGS_CREATE = 190
     HOME_SETTINGS_UPDATE = 191
 
-class EventData(dataobject):
-    ...
+class InteractionContextType(int, Enum):
+    GUILD = 0
+    BOT_DM = 1
+    PRIVATE_CHANNEL = 2
 
-class AvatarDecorationData(dataobject):
+class Serializable(dataobject):
+    @classmethod
+    def from_dict(cls, payload: dict) -> "Serializable":
+        obj = cls()
+        for key, value in payload.items():
+            if key in obj.__fields__:
+                setattr(obj, key, value) # REMOVES EXCESSIVE DATA GIVEN BY THE API. EITHER DOCUMENT IT, OR DON'T GIVE IT TO THE USER, DISCORD!!!! #rant
+            else:
+                logger.warning("Field %s ignored when serializing %s", key, obj)
+        
+        for field_name, typeclass in cls.__annotations__.items():
+            annot_type = typeclass
+
+            # handle self-references through string annotations
+            if isinstance(annot_type, str):
+                annot_type = getattr(sys.modules[__name__], annot_type)
+
+            # handle generic["String"] self-references with annotations
+            annot_type_args = list(get_args(annot_type))
+            for i in range(len((annot_type_args))):
+                if isinstance(annot_type_args[i], str):
+                    annot_type_args[i] = getattr(sys.modules[__name__], annot_type_args[i])
+
+            field = getattr(obj, field_name)
+            if field:
+                if isinstance(annot_type, UnionType):
+                    continue
+                # handle field: list[Serializable]
+                elif get_origin(annot_type) is list and annot_type_args and issubclass(annot_type_args[0], Serializable):
+                    for i in range(len(field)):
+                        field[i] = get_args(annot_type)[0].from_dict(field[i])
+
+                # handle field: dict[x, Serializable]
+                elif get_origin(annot_type) is dict and annot_type_args and issubclass(annot_type_args[1], Serializable):
+                    for k in field:
+                        field[k] = get_args(annot_type)[1].from_dict(field[k])
+
+                elif issubclass(annot_type, Serializable):
+                    setattr(obj, field_name, annot_type.from_dict(field))
+
+        return obj
+
+
+class AvatarDecorationData(Serializable):
     asset: str
     sku_id: int
 
-class User(dataobject):
+class User(Serializable):
     id: int
     username: str
     discriminator: str
@@ -148,8 +200,9 @@ class User(dataobject):
     premium_type: int
     public_flags: int
     avatar_decoration_data: AvatarDecorationData
+    clan: Any # UNDOCUMENTED FIELD IN THE API!!! BUT STILL RETURNED!! #rant
     
-class RoleTags(dataobject):
+class RoleTags(Serializable):
     bot_id: int
     integration_id: int
     premium_subscriber: bool
@@ -157,7 +210,7 @@ class RoleTags(dataobject):
     available_for_purchase: bool
     guild_connections: bool
 
-class Role(dataobject):
+class Role(Serializable):
     id: int
     name: str
     color: int
@@ -171,7 +224,7 @@ class Role(dataobject):
     tags: RoleTags
     flags: int
 
-class Emoji(dataobject):
+class Emoji(Serializable):
     id: int
     name: str
     roles: list[Role]
@@ -181,17 +234,17 @@ class Emoji(dataobject):
     animated: bool
     available: bool
 
-class WelcomeScreenChannel(dataobject):
+class WelcomeScreenChannel(Serializable):
     channel_id: int
     description: str
     emoji_id: int
     emoji_name: str
 
-class WelcomeScreen(dataobject):
+class WelcomeScreen(Serializable):
     description: str
     welcome_channels: list[WelcomeScreenChannel]
 
-class Sticker(dataobject):
+class Sticker(Serializable):
     id: int
     pack_id: int
     name: str
@@ -205,7 +258,7 @@ class Sticker(dataobject):
     user: User
     sort_value: int
 
-class GuildMember(dataobject):
+class GuildMember(Serializable):
     user: User
     nick: str
     avatar: str
@@ -219,20 +272,21 @@ class GuildMember(dataobject):
     permissions: str
     communication_disabled_until: str
     avatar_decoration_data: AvatarDecorationData
+    banner: str # UNDOCUMENTED FIELD IN THE API!!! BUT STILL RETURNED!! #rant
 
-class Application(dataobject):
+class Application(Serializable):
     ...
 
-class ActionMetadata(dataobject):
+class ActionMetadata(Serializable):
     channel_id: int
     duration_seconds: int
     custom_message: str
 
-class AutoModerationAction(dataobject):
+class AutoModerationAction(Serializable):
     type: ActionType
     metadata: ActionMetadata
 
-class TriggerMetadata(dataobject):
+class TriggerMetadata(Serializable):
     keyword_filter: list[str]
     regex_patterns: list[str]
     presets: list[KeywordPresetType]
@@ -240,7 +294,7 @@ class TriggerMetadata(dataobject):
     mention_total_limit: int
     mention_raid_protection_enabled: bool
 
-class AutoModerationRule(dataobject):
+class AutoModerationRule(Serializable):
     id: int
     guild_id: int
     name: str
@@ -253,13 +307,13 @@ class AutoModerationRule(dataobject):
     exempt_rules: list[int]
     exempt_channels: list[int]
 
-class Overwrite(dataobject):
+class Overwrite(Serializable):
     id: int
     type: int
     allow: str
     deny: str
 
-class ThreadMetadata(dataobject):
+class ThreadMetadata(Serializable):
     archived: bool
     auto_archive_duration: int
     archive_timestamp: str
@@ -267,25 +321,25 @@ class ThreadMetadata(dataobject):
     invitable: bool
     create_timestamp: str
 
-class ThreadMember(dataobject):
+class ThreadMember(Serializable):
     id: int
     user_id: int
     join_timestamp: str
     flags: int
     member: GuildMember
 
-class ForumTag(dataobject):
+class ForumTag(Serializable):
     id: int
     name: str
     moderated: bool
     emoji_id: int
     emoji_name: str
 
-class DefaultReaction(dataobject):
+class DefaultReaction(Serializable):
     emoji_id: int
     emoji_name: str
 
-class Channel(dataobject):
+class Channel(Serializable):
     id: int
     type: ChannelType
     guild_id: int
@@ -322,19 +376,19 @@ class Channel(dataobject):
     default_sort_order: int
     default_forum_layout: int
 
-class Entitlement(dataobject):
+class Entitlement(Serializable):
     id: int
     sku_id: int
     application_id: int
     user_id: int
     type: int
     deleted: bool
-    starts_at: int
-    ends_at: int
+    starts_at: str
+    ends_at: str
     guild_id: int
     consumed: bool
 
-class VoiceState(dataobject):
+class VoiceState(Serializable):
     guild_id: int
     channel_id: int
     user_id: int
@@ -349,35 +403,35 @@ class VoiceState(dataobject):
     suppress: bool
     request_to_speak_timestamp: int
 
-class ClientStatus(dataobject):
+class ClientStatus(Serializable):
     desktop: str
     mobile: str
     web: str
 
-class ActivityParty(dataobject):
+class ActivityParty(Serializable):
     id: int
     size: list[int, int]
 
-class ActivityAssets(dataobject):
+class ActivityAssets(Serializable):
     large_image: str
     large_text: str
     small_image: str
     small_text: str
 
-class ActivitySecrets(dataobject):
+class ActivitySecrets(Serializable):
     join: str
     spectate: str
     match: str
 
-class ActivityTimestamps(dataobject):
+class ActivityTimestamps(Serializable):
     start: int
     end: int
 
-class ActivityButton(dataobject):
+class ActivityButton(Serializable):
     label: str
     url: str
 
-class Activity(dataobject):
+class Activity(Serializable):
     name: str
     type: int
     url: str
@@ -394,7 +448,7 @@ class Activity(dataobject):
     flags: int
     buttons: list[ActivityButton]
 
-class StageInstance(dataobject):
+class StageInstance(Serializable):
     id: int
     guild_id: int
     channel_id: int
@@ -403,14 +457,14 @@ class StageInstance(dataobject):
     discoverable_disabled: bool
     guild_scheduled_event_id: int
 
-class GuildScheduledEventEntityMetadata(dataobject):
+class GuildScheduledEventEntityMetadata(Serializable):
     location: str
 
-class RecurrenceNWeekday(dataobject):
+class RecurrenceNWeekday(Serializable):
     n: int
     day: int
 
-class GuildScheduledEventRecurrenceRule(dataobject):
+class GuildScheduledEventRecurrenceRule(Serializable):
     start: str
     end: str
     frequency: int
@@ -422,7 +476,7 @@ class GuildScheduledEventRecurrenceRule(dataobject):
     by_year_day: list[int]
     count: int
 
-class GuildScheduledEvent(dataobject):
+class GuildScheduledEvent(Serializable):
     id: int
     guild_id: int
     channel_id: int
@@ -441,11 +495,11 @@ class GuildScheduledEvent(dataobject):
     image: str
     reccurence_rule: GuildScheduledEventRecurrenceRule
 
-class UnavailableGuild(dataobject):
+class UnavailableGuild(Serializable):
     id: int
     unavailable: bool = True
 
-class Guild(dataobject):
+class Guild(Serializable):
     id: int
     name: str
     icon: str
@@ -489,19 +543,20 @@ class Guild(dataobject):
     stickers: list[Sticker]
     premium_progress_bar_enabled: bool
     safety_alerts_channel_id: int
+    unavailable: bool = False
 
-class IntegrationAccount(dataobject):
+class IntegrationAccount(Serializable):
     id: str
     name: str
 
-class IntegrationApplication(dataobject):
+class IntegrationApplication(Serializable):
     id: int
     name: str
     icon: str
     description: str
     bot: User
 
-class Integration(dataobject):
+class Integration(Serializable):
     id: int
     name: str
     type: str
@@ -519,17 +574,17 @@ class Integration(dataobject):
     application: IntegrationApplication
     scopes: list[str]
 
-class ChannelMention(dataobject):
+class ChannelMention(Serializable):
     id: int
     guild_id: int
     type: int
     name: str
 
-class ReactionCountDetails(dataobject):
+class ReactionCountDetails(Serializable):
     burst: int
     normal: int
 
-class Reaction(dataobject):
+class Reaction(Serializable):
     count: int
     count_details: ReactionCountDetails
     me: bool
@@ -537,45 +592,45 @@ class Reaction(dataobject):
     emoji: Emoji
     burst_colors: list[str]
 
-class EmbedThumbnail(dataobject):
+class EmbedThumbnail(Serializable):
     url: str
     proxy_url: str
     height: int
     width: int
 
-class EmbedVideo(dataobject):
+class EmbedVideo(Serializable):
     url: str
     proxy_url: str
     height: int
     width: int
 
-class EmbedImage(dataobject):
+class EmbedImage(Serializable):
     url: str
     proxy_url: str
     height: int
     width: int
 
-class EmbedProvider(dataobject):
+class EmbedProvider(Serializable):
     name: str
     url: str
 
-class EmbedAuthor(dataobject):
+class EmbedAuthor(Serializable):
     name: str
     url: str
     icon_url: str
     proxy_icon_url: str
 
-class EmbedFooter(dataobject):
+class EmbedFooter(Serializable):
     text: str
     icon_url: str
     proxy_icon_url: str
 
-class EmbedField(dataobject):
+class EmbedField(Serializable):
     name: str
     value: str
     inline: bool
 
-class Embed(dataobject):
+class Embed(Serializable):
     title: str
     type: str
     description: str
@@ -590,7 +645,7 @@ class Embed(dataobject):
     author: EmbedAuthor
     fields: list[EmbedField]
 
-class Attachment(dataobject):
+class Attachment(Serializable):
     id: int
     filename: str
     title: str
@@ -606,18 +661,18 @@ class Attachment(dataobject):
     waveform: str
     flags: int
 
-class MessageActivity(dataobject):
+class MessageActivity(Serializable):
     type: int
     party_id: str
 
-class MessageReference(dataobject):
+class MessageReference(Serializable):
     type: int
     message_id: int
     channel_id: int
     guild_id: int
     fail_if_not_exists: bool
 
-class MessageSnapshotPartialMessage(dataobject):
+class MessageSnapshotPartialMessage(Serializable):
     type: int
     content: str
     embeds: list[Embed]
@@ -628,10 +683,10 @@ class MessageSnapshotPartialMessage(dataobject):
     mentions: list[User]
     mention_roles: list[Role]
 
-class MessageSnapshot(dataobject):
+class MessageSnapshot(Serializable):
     message: MessageSnapshotPartialMessage
 
-class MessageInteractionMetadata(dataobject):
+class MessageInteractionMetadata(Serializable):
     id: int
     interaction: InteractionType
     user: User
@@ -640,25 +695,25 @@ class MessageInteractionMetadata(dataobject):
     interacted_message_id: int
     triggering_interaction_metadata: "MessageInteractionMetadata"
 
-class MessageInteraction(dataobject):
+class MessageInteraction(Serializable):
     id: int
     type: InteractionType
     name: str
     user: User
     member: GuildMember
 
-class MessageStickerItem(dataobject):
+class MessageStickerItem(Serializable):
     id: int
     name: str
     format_type: int
 
-class RoleSubscriptionData(dataobject):
+class RoleSubscriptionData(Serializable):
     role_subscription_listing_id: int
     tier_name: str
     total_months_subscribed: int
     is_renewal: bool
 
-class Resolved(dataobject):
+class Resolved(Serializable):
     users: dict[int, User]
     members: dict[int, GuildMember]
     roles: dict[int, Role]
@@ -666,24 +721,24 @@ class Resolved(dataobject):
     messages: dict[int, "Message"]
     attachments: dict[int, Attachment]
 
-class PollMedia(dataobject):
+class PollMedia(Serializable):
     text: str
     emoji: Emoji
 
-class PollAnswer(dataobject):
+class PollAnswer(Serializable):
     answer_id: int
     poll_media: PollMedia
 
-class PollAnswerCount(dataobject):
+class PollAnswerCount(Serializable):
     id: int
     count: int
     me_voted: bool
 
-class PollResults(dataobject):
+class PollResults(Serializable):
     is_finalized: bool
     answer_counts: list[PollAnswerCount]
 
-class Poll(dataobject):
+class Poll(Serializable):
     question: PollMedia
     answer: list[PollAnswer]
     expiry: str
@@ -691,14 +746,17 @@ class Poll(dataobject):
     layout_type: int
     results: PollResults
 
-class MessageCall(dataobject):
+class MessageCall(Serializable):
     participants: list[int]
     ended_timestamp: str
 
-class Component(dataobject):
-    ...
+class Component(Serializable):
+    # TEMPORARY, NOT IMPLEMENTED, SEE TODOS
+    @classmethod
+    def from_dict(cls, payload: dict) -> Serializable:
+        return payload
 
-class Message(dataobject):
+class Message(Serializable):
     id: int
     channel_id: int
     author: User
@@ -727,7 +785,7 @@ class Message(dataobject):
     interaction_metadata: MessageInteractionMetadata
     interaction: MessageInteraction
     thread: Channel
-    components: list[Component] # FIXME(idmp152): RETURNS A DICT NOW!!! https://discord.com/developers/docs/interactions/message-components#component-object NOT YET IMPLEMENTED
+    components: list[Component] # FIXME(idmp152): RETURNS A DICT FOR NOW!!! https://discord.com/developers/docs/interactions/message-components#component-object NOT YET IMPLEMENTED
     sticker_items: list[MessageStickerItem]
     stickers: list[Sticker]
     position: int
@@ -736,7 +794,7 @@ class Message(dataobject):
     poll: Poll
     call: MessageCall
 
-class Subscription(dataobject):
+class Subscription(Serializable):
     id: int
     user_id: int
     sku_ids: list[int]
@@ -747,12 +805,12 @@ class Subscription(dataobject):
     canceled_at: str
     country: str
 
-class AuditLogChange(dataobject):
+class AuditLogChange(Serializable):
     new_value: Any
     old_value: Any
     key: str
 
-class OptionalAuditEntryInfo(dataobject):
+class OptionalAuditEntryInfo(Serializable):
     application_id: int
     auto_moderation_rule_name: str
     auto_moderation_rule_trigger_type: str
@@ -766,7 +824,7 @@ class OptionalAuditEntryInfo(dataobject):
     type: str
     integration_type: str
 
-class AuditLogEntry(dataobject):
+class AuditLogEntry(Serializable):
     target_id: str
     changes: list[AuditLogChange]
     user_id: int
@@ -775,10 +833,61 @@ class AuditLogEntry(dataobject):
     options: OptionalAuditEntryInfo
     reason: str
 
-class Hello(EventData):
+class ApplicationCommandInteractionDataOption(Serializable):
+    name: str
+    type: int
+    value: str | int | float | bool
+    options: list["ApplicationCommandInteractionDataOption"]
+    focused: bool
+
+class SelectOption(Serializable):
+    label: str
+    value: str
+    description: str
+    emoji: Emoji
+    default: bool
+
+class InteractionData(Serializable):
+    # Application Command Data
+    id: int
+    name: str
+    type: int
+    resolved: Resolved
+    options: list[ApplicationCommandInteractionDataOption]
+    guild_id: int
+    target_id: int
+    # Message Component Data
+    custom_id: str
+    component_type: int
+    values: list[SelectOption]
+    # Modal Submit Data
+    components: list[Component]
+
+class Interaction(Serializable):
+    id: int
+    application_id: int
+    type: InteractionType
+    data: InteractionData
+    guild: Guild
+    guild_id: int
+    channel: Channel
+    channel_id: int
+    member: GuildMember
+    user: User
+    token: str
+    version: int
+    message: Message
+    app_permissions: str
+    locale: str
+    guild_locale: str 
+    entitlements: list[Entitlement]
+    authorizing_integration_owners: dict
+    context: InteractionContextType
+
+class Hello(Serializable):
     heartbeat_interval: int
 
-class Ready(EventData):
+class Ready(Serializable):
     v: int
     user: User
     guilds: list[UnavailableGuild]
@@ -787,12 +896,16 @@ class Ready(EventData):
     shard: list[int, int]
     application: Application
 
-class ApplicationCommandPermissions(EventData):
+    @classmethod
+    def from_dict(cls, payload: dict) -> Serializable: # TODO(idmp152): Fix READY event serialization (check additional undocumented fields)
+        return payload
+
+class ApplicationCommandPermissions(Serializable):
     id: int
     type: ApplicationCommandPermissionType
     permission: bool
 
-class AutoModerationActionExecution(EventData):
+class AutoModerationActionExecution(Serializable):
     guild_id: int
     action: AutoModerationAction
     rule_id: int
@@ -805,23 +918,23 @@ class AutoModerationActionExecution(EventData):
     matched_keyword: str
     matched_content: str
 
-class ThreadListSync(EventData):
+class ThreadListSync(Serializable):
     guild_id: int
     channel_ids: list[int]
     threads: list[Channel]
     members: list[ThreadMember]
 
-class ChannelPinsUpdate(EventData):
+class ChannelPinsUpdate(Serializable):
     guild_id: int
     channel_id: int
     last_pin_timestamp: int
 
-class IntegrationDelete(EventData):
+class IntegrationDelete(Serializable):
     id: int
     guild_id: int
     application_id: int
 
-class InviteCreate(EventData):
+class InviteCreate(Serializable):
     channel_id: int
     code: str
     created_at: str
@@ -835,23 +948,23 @@ class InviteCreate(EventData):
     temporary: bool
     uses: int
 
-class InviteDelete(EventData):
+class InviteDelete(Serializable):
     channel_id: int
     guild_id: int
     code: str
 
-class MessageDelete(EventData):
+class MessageDelete(Serializable):
     id: int
     channel_id: int
     guild_id: int
 
-class MessageDeleteBulk(EventData):
+class MessageDeleteBulk(Serializable):
     id: int
     channel_id: int
     guild_id: int
 
 
-class MessageReactionAdd(EventData):
+class MessageReactionAdd(Serializable):
     user_id: int
     channel_id: int
     message_id: int
@@ -863,7 +976,7 @@ class MessageReactionAdd(EventData):
     burst_colors: list[str]
     type: int
 
-class MessageReactionRemove(EventData):
+class MessageReactionRemove(Serializable):
     user_id: int
     channel_id: int
     message_id: int
@@ -872,32 +985,32 @@ class MessageReactionRemove(EventData):
     burst: bool
     type: int
 
-class MessageReactionRemoveAll(EventData):
+class MessageReactionRemoveAll(Serializable):
     channel_id: int
     message_id: int
     guild_id: int
 
-class MessageReactionRemoveEmoji(EventData):
+class MessageReactionRemoveEmoji(Serializable):
     channel_id: int
     guild_id: int
     message_id: int
     emoji: Emoji
 
-class PresenceUpdate(EventData):
+class PresenceUpdate(Serializable):
     user: User
     guild_id: int
     status: str
     activities: list[Activity]
     client_status: ClientStatus
 
-class TypingStart(EventData):
+class TypingStart(Serializable):
     channel_id: int
     guild_id: int
     user_id: int
     timestamp: int
     member: GuildMember
 
-class VoiceChannelEffectSend(EventData):
+class VoiceChannelEffectSend(Serializable):
     channel_id: int
     guild_id: int
     user_id: int
@@ -907,62 +1020,61 @@ class VoiceChannelEffectSend(EventData):
     sound_id: int
     sound_volume: float
 
-class VoiceServerUpdate(EventData):
+class VoiceServerUpdate(Serializable):
     token: str
     guild_id: int
     endpoint: str
 
-class WebhooksUpdate(EventData):
+class WebhooksUpdate(Serializable):
     guild_id: int
     channel_id: int
 
-class MessagePollVoteAdd(EventData):
+class MessagePollVoteAdd(Serializable):
     user_id: int
     channel_id: int
     message_id: int
     guild_id: int
     answer_id: int
     
-class MessagePollVoteRemove(EventData):
+class MessagePollVoteRemove(Serializable):
     user_id: int
     channel_id: int
     message_id: int
     guild_id: int
     answer_id: int
 
-class ThreadCreate(Channel, EventData):
+class ThreadCreate(Channel):
     newly_created: bool
 
-class IntegrationCreate(Integration, EventData):
+class IntegrationCreate(Integration):
     guild_id: int
 
-class IntegrationUpdate(Integration, EventData):
+class IntegrationUpdate(Integration):
     guild_id: int
 
-class ThreadMemberUpdate(ThreadMember, EventData):
+class ThreadMemberUpdate(ThreadMember):
     guild_id: int
 
-class ThreadMembersUpdate(EventData):
+class ThreadMembersUpdate(Serializable):
     id: int
     guild_id: int
     member_count: int
     added_members: list[ThreadMember]
     removed_member_ids: list[int]
 
-class MessageCreate(Message, EventData):
+class MessageCreate(Message):
     guild_id: int
     member: GuildMember
     # mentions: list[User] 
 
-class MessageUpdate(Message, EventData):
+class MessageUpdate(Message):
     guild_id: int
     member: GuildMember
     # mentions: list[User]
 
-class GuildCreate(Guild, EventData):
+class GuildCreate(Guild):
     joined_at: str
     large: bool
-    unavailable: bool
     member_count: int
     voice_states: list[VoiceState]
     members: list[GuildMember]
@@ -972,36 +1084,36 @@ class GuildCreate(Guild, EventData):
     stage_instances: list[StageInstance]
     guild_scheduled_events: list[GuildScheduledEvent]
 
-class GuildAuditLogEntryCreate(AuditLogEntry, EventData):
+class GuildAuditLogEntryCreate(AuditLogEntry):
     guild_id: int
 
-class GuildBanAdd(EventData):
-    guild_id: int
-    user: User
-
-class GuildBanRemove(EventData):
+class GuildBanAdd(Serializable):
     guild_id: int
     user: User
 
-class GuildEmojisUpdate(EventData):
+class GuildBanRemove(Serializable):
+    guild_id: int
+    user: User
+
+class GuildEmojisUpdate(Serializable):
     guild_id: int
     emojis: list[Emoji]
 
-class GuildStickersUpdate(EventData):
+class GuildStickersUpdate(Serializable):
     guild_id: int
     stickers: list[Sticker]
 
-class GuildIntegrationsUpdate(EventData):
+class GuildIntegrationsUpdate(Serializable):
     guild_id: int
 
-class GuildMemberAdd(GuildMember, EventData):
+class GuildMemberAdd(GuildMember):
     guild_id: int
 
-class GuildMemberRemove(EventData):
+class GuildMemberRemove(Serializable):
     guild_id: int
     user: User
 
-class GuildMemberUpdate(EventData):
+class GuildMemberUpdate(Serializable):
     guild_id: int
     roles: list[int]
     user: User
@@ -1016,7 +1128,7 @@ class GuildMemberUpdate(EventData):
     flags: int
     avatar_decoration_data: AvatarDecorationData
 
-class GuildMembersChunk(EventData):
+class GuildMembersChunk(Serializable):
     guild_id: int
     members: list[GuildMember]
     chunk_index: int
@@ -1025,24 +1137,120 @@ class GuildMembersChunk(EventData):
     presences: list[PresenceUpdate]
     nonce: str
 
-class GuildRoleCreate(EventData):
+class GuildRoleCreate(Serializable):
     guild_id: int
     role: Role
 
-class GuildRoleUpdate(EventData):
+class GuildRoleUpdate(Serializable):
     guild_id: int
     role: Role
 
-class GuildRoleDelete(EventData):
+class GuildRoleDelete(Serializable):
     guild_id: int
     role: Role
+
+class GuildScheduledEventUserAdd(Serializable):
+    guild_scheduled_event_id: int
+    user_id: int
+    guild_id: int
+
+class GuildScheduledEventUserRemove(Serializable):
+    guild_scheduled_event_id: int
+    user_id: int
+    guild_id: int
 
 class Event(dataobject):
     opcode: int
     sequence: int
     name: str
-    data: EventData | dataobject | bool | None
+    data: Serializable | bool | None
 
+
+EVENT_DATAOBJECTS = {
+    "HELLO": Hello,
+    "READY": Ready,
+    "APPLICATION_COMMAND_PERMISSIONS_UPDATE": ApplicationCommandPermissions,
+    "AUTO_MODERATION_RULE_CREATE": AutoModerationRule,
+    "AUTO_MODERATION_RULE_UPDATE": AutoModerationRule,
+    "AUTO_MODERATION_RULE_DELETE": AutoModerationRule,
+    "AUTO_MODERATION_ACTION_EXECUTION": AutoModerationActionExecution,
+    "CHANNEL_CREATE": Channel,
+    "CHANNEL_UPDATE": Channel,
+    "CHANNEL_DELETE": Channel,
+    "THREAD_CREATE": ThreadCreate,
+    "THREAD_UPDATE": Channel,
+    "THREAD_DELETE": Channel,
+    "THREAD_LIST_SYNC": ThreadListSync,
+    "THREAD_MEMBER_UPDATE": ThreadMemberUpdate,
+    "THREAD_MEMBERS_UPDATE": ThreadMembersUpdate,
+    "CHANNEL_PINS_UPDATE": ChannelPinsUpdate,
+    "ENTITLEMENT_CREATE": Entitlement,
+    "ENTITLEMENT_UPDATE": Entitlement,
+    "ENTITLEMENT_DELETE": Entitlement,
+    "GUILD_CREATE": GuildCreate,
+    "GUILD_UPDATE": Guild,
+    "GUILD_DELETE": UnavailableGuild,
+    "GUILD_AUDIT_LOG_ENTRY_CREATE": GuildAuditLogEntryCreate,
+    "GUILD_BAN_ADD": GuildBanAdd,
+    "GUILD_BAN_REMOVE": GuildBanRemove,
+    "GUILD_EMOJIS_UPDATE": GuildEmojisUpdate,
+    "GUILD_STICKERS_UPDATE": GuildStickersUpdate,
+    "GUILD_INTEGRATIONS_UPDATE": GuildIntegrationsUpdate,
+    "GUILD_MEMBER_ADD": GuildMemberAdd,
+    "GUILD_MEMBER_REMOVE": GuildMemberRemove,
+    "GUILD_MEMBER_UPDATE": GuildMemberUpdate,
+    "GUILD_MEMBERS_CHUNK": GuildMembersChunk,
+    "GUILD_ROLE_CREATE": GuildRoleCreate,
+    "GUILD_ROLE_UPDATE": GuildRoleUpdate,
+    "GUILD_ROLE_DELETE": GuildRoleDelete,
+    "GUILD_SCHEDULED_EVENT_CREATE": GuildScheduledEvent,
+    "GUILD_SCHEDULED_EVENT_UPDATE": GuildScheduledEvent,
+    "GUILD_SCHEDULED_EVENT_DELETE": GuildScheduledEvent,
+    "GUILD_SCHEDULED_EVENT_USER_ADD": GuildScheduledEventUserAdd,
+    "GUILD_SCHEDULED_EVENT_USER_REMOVE": GuildScheduledEventUserRemove,
+    "INTEGRATION_CREATE": IntegrationCreate,
+    "INTEGRATION_UPDATE": IntegrationUpdate,
+    "INTEGRATION_DELETE": IntegrationDelete,
+    "INVITE_CREATE": InviteCreate,
+    "INVITE_DELETE": InviteDelete,
+    "MESSAGE_CREATE": MessageCreate,
+    "MESSAGE_UPDATE": MessageUpdate,
+    "MESSAGE_DELETE": MessageDelete,
+    "MESSAGE_DELETE_BULK": MessageDeleteBulk,
+    "MESSAGE_REACTION_ADD": MessageReactionAdd,
+    "MESSAGE_REACTION_REMOVE": MessageReactionRemove,
+    "MESSAGE_REACTION_REMOVE_ALL": MessageReactionRemoveAll,
+    "MESSAGE_REACTION_REMOVE_EMOJI": MessageReactionRemoveEmoji,
+    "PRESENCE_UPDATE": PresenceUpdate,
+    "TYPING_START": TypingStart,
+    "VOICE_CHANNEL_EFFECT_SEND": VoiceChannelEffectSend,
+    "VOICE_STATE_UPDATE": VoiceState,
+    "VOICE_SERVER_UPDATE": VoiceServerUpdate,
+    "WEBHOOKS_UPDATE": WebhooksUpdate,
+    "INTERACTION_CREATE": Interaction,
+    "STAGE_INSTANCE_CREATE": StageInstance,
+    "STAGE_INSTANCE_UPDATE": StageInstance,
+    "STAGE_INSTANCE_DELETE": StageInstance,
+    "SUBSCRIPTION_CREATE": Subscription,
+    "SUBSCRIPTION_UPDATE": Subscription,
+    "SUBSCRIPTION_DELETE": Subscription,
+    "MESSAGE_POLL_VOTE_ADD": MessagePollVoteAdd,
+    "MESSAGE_POLL_VOTE_REMOVE": MessagePollVoteRemove
+}
+
+def process_event_payload(payload: dict) -> Event:
+    """
+    Preprocess raw JSON data into a dataclass-like object. (api_types.py)
+    Uses recordclass.dataobject type for higher performance, inheritance and low memory footprint
+
+    :param payload: payload
+    :returns: Dataclass-like Discord API stuct
+    """
+
+    event = Event(opcode=payload["op"], sequence=payload["s"], name=payload["t"])
+    event_dataobject = EVENT_DATAOBJECTS.get(event.name)
+    event.data = event_dataobject.from_dict(payload["d"]) if event_dataobject else payload["d"]
+    return event
 
 #TODO(idmp152): Document classes in format:
 """This is a test class for dataclasses.
@@ -1054,3 +1262,5 @@ class Event(dataobject):
         var_str (str): A string.
 
     """
+
+#TODO(idmp152): replace int and str types for snowflake ids and timestapms with typing.NewType (possibly)
