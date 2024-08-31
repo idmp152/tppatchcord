@@ -2,6 +2,7 @@ import asyncio
 from time import ctime
 
 from tppatchcord.websockets import main_loop, next_event
+from tppatchcord.api_types import process_event_payload, MessageCreate
 
 
 def get_token(token_file: str) -> str:
@@ -16,9 +17,10 @@ async def my_handler():
         print("Initializing...")
         while True:
             event = await next_event()
-            if event["t"] == "MESSAGE_CREATE":
-                message = event["d"]
-                print(f"{ctime()} | {message["member"]["nick"]} < {message["content"]}")
+            event = process_event_payload(event) # TOTALLY OPTIONAL STEP! You can use the library without serializing or importing api_types whatsoever which will also boost your performance. Used just for fun
+            if event.name == "MESSAGE_CREATE":
+                message: MessageCreate = event.data
+                print(f"{ctime()} | {message.member.nick or message.author.username} < {message.content}")
     except asyncio.CancelledError:
         print("Exiting my_handler...")
 

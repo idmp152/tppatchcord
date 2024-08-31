@@ -2,11 +2,8 @@ import asyncio
 import json
 from typing import Any
 
-import requests
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect
-
-from .api_types import Event
 
 HELLO_OPCODE = 10
 IDENTIFY_OPCODE = 2
@@ -17,7 +14,7 @@ DISCORD_API_BASE_URL = f"https://discord.com/api/v{DISCORD_API_VERSION}/"
 
 DISCORD_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0"
 
-GATEWAY_URL = requests.get(DISCORD_API_BASE_URL + "gateway", headers={"User-Agent": DISCORD_USER_AGENT}).json()["url"]
+GATEWAY_URL = f"wss://gateway.discord.gg/?v={DISCORD_API_VERSION}&encoding=json"
 
 INTENTS = 33280
 
@@ -32,7 +29,7 @@ IDENTIFY_PAYLOAD = {
 }
 
 HEARTBEAT_SKEW = 2000
-WS_MAX_SIZE = 2*22
+WS_MAX_SIZE = 2**22
 
 _global_context = {
     "heartbeat_interval": None,
@@ -52,18 +49,6 @@ def form_message(opcode: int, payload: Any):
     :returns: JSON event message
     """
     return json.dumps({"op": opcode, "d": payload})
-
-def process_event_payload(payload: dict) -> Event:
-    """
-    Preprocess raw JSON data into a dataclass-like object. (api_types.py)
-    Uses recordclass.dataobject type for higher performance, inheritance and low memory footprint
-
-    :param payload: payload
-    :returns: Dataclass-like Discord API stuct
-    """
-
-    #TODO(idmp152): write a switch data preprocessing
-    return Event(**payload)
 
 async def next_event() -> dict:
     """

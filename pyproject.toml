@@ -9,8 +9,8 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.12"
 websockets = "^13.0.1"
-requests = "^2.32.3"
 recordclass = "^0.22.1"
+aiohttp = "^3.10.5"
 
 
 [build-system]
